@@ -42,6 +42,7 @@ const searchAvailability = async (req, res, next) => {
     }
 
     const result = await getRealAvailability({
+      patientName,
       preferredWeekday,
       preferredShift: normalizedShift,
       attempt: Number(attempt),
