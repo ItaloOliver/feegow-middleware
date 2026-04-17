@@ -38,13 +38,6 @@ const normalizeWeekday = (value) => {
   return value.toLowerCase().trim();
 };
 
-const formatDate = (date) => {
-  const d = String(date.getDate()).padStart(2, '0');
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const y = date.getFullYear();
-  return `${d}-${m}-${y}`;
-};
-
 const getShift = (time) => {
   const hour = Number(time.split(':')[0]);
   return hour < 12 ? SHIFT_MANHA : SHIFT_TARDE;
@@ -71,18 +64,6 @@ const enrich = (slot) => {
     shift: getShift(slot.time),
     datetime: `${slot.date}T${slot.time}`
   };
-};
-
-const fetchSlotsFromProfessional = async (professionalId, start, end) => {
-  const res = await getAvailableSchedule({
-    procedimentoId: PROCEDIMENTO_ID,
-    dataStart: start,
-    dataEnd: end,
-    unidadeId: UNIDADE_ID,
-    profissionalId: professionalId
-  });
-
-  return flattenAvailableSchedule(res).map(enrich);
 };
 
 const fetchAllSlots = async () => {
@@ -121,27 +102,14 @@ const fetchAllSlots = async () => {
   };
 };
 
-const getNextOccurrenceDateForWeekday = (weekdayName) => {
-  const targetIndex = WEEKDAYS.indexOf(weekdayName);
-
-  if (targetIndex === -1) {
-    return null;
+const getFirstAvailableDateForWeekday = (slots, weekdayName) => {
+  for (const slot of slots) {
+    if (slot.weekday === weekdayName) {
+      return slot.date;
+    }
   }
 
-  const today = new Date();
-  const todayIndex = today.getDay();
-
-  let diff = targetIndex - todayIndex;
-
-  if (diff < 0) {
-    diff += 7;
-  }
-
-  const targetDate = new Date(today);
-  targetDate.setHours(0, 0, 0, 0);
-  targetDate.setDate(today.getDate() + diff);
-
-  return targetDate.toISOString().slice(0, 10);
+  return null;
 };
 
 const getFirstAvailableDateAfter = (slots, minDate, minDateTime = null) => {
@@ -151,13 +119,13 @@ const getFirstAvailableDateAfter = (slots, minDate, minDateTime = null) => {
 
     if (minDateTime !== null) {
       if (slotDateTime > minDateTime) {
-        return slotDate;
+        return slot.date;
       }
       continue;
     }
 
     if (slotDate > minDate) {
-      return slotDate;
+      return slot.date;
     }
   }
 
@@ -209,7 +177,7 @@ const getRealAvailability = async ({
     };
   }
 
-  const slots = await fetchAllSlots();
+  const { slots, debugByProfessional } = await fetchAllSlots();
 
   if (!slots.length) {
     return {
@@ -218,12 +186,27 @@ const getRealAvailability = async ({
       handover: true,
       message: 'Nenhum slot foi encontrado na agenda real.',
       debug: {
-        totalSlots: 0
+        totalSlots: 0,
+        debugByProfessional
       }
     };
   }
 
-  const targetDate = getNextOccurrenceDateForWeekday(weekday);
+  const targetDate = getFirstAvailableDateForWeekday(slots, weekday);
+
+  if (!targetDate) {
+    return {
+      success: true,
+      attempt: safeAttempt,
+      handover: true,
+      message: 'Encaminhar para atendente humano',
+      debug: {
+        totalSlots: slots.length,
+        targetDate: null,
+        debugByProfessional
+      }
+    };
+  }
 
   if (safeAttempt === 1) {
     const exactMatches = slots.filter(
@@ -249,7 +232,8 @@ const getRealAvailability = async ({
       debug: {
         totalSlots: slots.length,
         targetDate,
-        exactMatches: exactMatches.length
+        exactMatches: exactMatches.length,
+        debugByProfessional
       }
     };
   }
@@ -272,7 +256,8 @@ const getRealAvailability = async ({
       debug: {
         totalSlots: slots.length,
         targetDate,
-        nextAvailableDate: null
+        nextAvailableDate: null,
+        debugByProfessional
       }
     };
   }
@@ -299,7 +284,7 @@ const getRealAvailability = async ({
         totalSlots: slots.length,
         targetDate,
         nextAvailableDate,
-        nextDateSlots: nextDateSlots.length
+        debugByProfessional
       }
     };
   }
@@ -329,7 +314,8 @@ const getRealAvailability = async ({
       totalSlots: slots.length,
       targetDate,
       nextAvailableDate,
-      nextDateSlots: nextDateSlots.length
+      nextDateSlots: nextDateSlots.length,
+      debugByProfessional
     }
   };
 };
