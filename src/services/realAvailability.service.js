@@ -86,23 +86,39 @@ const fetchSlotsFromProfessional = async (professionalId, start, end) => {
 };
 
 const fetchAllSlots = async () => {
-  const today = new Date();
-
-  // janela maior para reduzir risco de "nenhum slot"
-  const future = new Date();
-  future.setDate(today.getDate() + 90);
-
-  const start = formatDate(today);
-  const end = formatDate(future);
+  const start = '09-04-2026';
+  const end = '30-04-2026';
 
   const allResults = [];
+  const debugByProfessional = [];
 
   for (const professionalId of PROFESSIONAL_IDS) {
-    const slots = await fetchSlotsFromProfessional(professionalId, start, end);
-    allResults.push(...slots);
+    const raw = await getAvailableSchedule({
+      procedimentoId: PROCEDIMENTO_ID,
+      dataStart: start,
+      dataEnd: end,
+      unidadeId: UNIDADE_ID,
+      profissionalId
+    });
+
+    const flattened = flattenAvailableSchedule(raw).map(enrich);
+
+    debugByProfessional.push({
+      professionalId,
+      totalFromApi: raw?.total ?? null,
+      rawSuccess: raw?.success ?? null,
+      hasContent: !!raw?.content,
+      flattenedCount: flattened.length,
+      rawContentPreview: JSON.stringify(raw?.content).slice(0, 500)
+    });
+
+    allResults.push(...flattened);
   }
 
-  return allResults.sort((a, b) => new Date(a.datetime) - new Date(b.datetime));
+  return {
+    slots: allResults.sort((a, b) => new Date(a.datetime) - new Date(b.datetime)),
+    debugByProfessional
+  };
 };
 
 const getNextOccurrenceDateForWeekday = (weekdayName) => {
