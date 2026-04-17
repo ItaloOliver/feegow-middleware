@@ -1,6 +1,6 @@
 const { getRealAvailability, normalizeShift } = require('../services/realAvailability.service');
 
-const searchAvailability = async (req, res, next) => {
+const searchAvailability = async (req, res) => {
   try {
     const {
       patientName,
@@ -57,7 +57,19 @@ const searchAvailability = async (req, res, next) => {
       ...result
     });
   } catch (error) {
-    return next(error);
+    console.error('ERRO REAL NO /availability/search');
+    console.error('status:', error.response?.status);
+    console.error('data:', error.response?.data);
+    console.error('message:', error.message);
+    console.error('stack:', error.stack);
+
+    return res.status(error.response?.status || 500).json({
+      success: false,
+      message: 'Falha ao buscar disponibilidade.',
+      errorStatus: error.response?.status || 500,
+      errorMessage: error.message,
+      errorDetails: error.response?.data || null
+    });
   }
 };
 
