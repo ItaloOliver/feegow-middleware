@@ -56,7 +56,7 @@ const formatLabel = (time) => {
 };
 
 const createOption = (slot) => ({
-  slotId: `${slot.date}T${slot.time}|${slot.profissionalId}|${slot.localId}`,
+  slotId: `${slot.date}T${slot.time}|${slot.professionalId}|${slot.localId}`,
   label: `${slot.weekday} às ${formatLabel(slot.time)}`,
   timeLabel: formatLabel(slot.time),
   weekday: slot.weekday,
@@ -87,21 +87,22 @@ const fetchSlotsFromProfessional = async (professionalId, start, end) => {
 
 const fetchAllSlots = async () => {
   const today = new Date();
+
+  // janela maior para reduzir risco de "nenhum slot"
   const future = new Date();
-  future.setDate(today.getDate() + 30);
+  future.setDate(today.getDate() + 90);
 
   const start = formatDate(today);
   const end = formatDate(future);
 
-  const results = await Promise.all(
-    PROFESSIONAL_IDS.map((id) =>
-      fetchSlotsFromProfessional(id, start, end).catch(() => [])
-    )
-  );
+  const allResults = [];
 
-  return results
-    .flat()
-    .sort((a, b) => new Date(a.datetime) - new Date(b.datetime));
+  for (const professionalId of PROFESSIONAL_IDS) {
+    const slots = await fetchSlotsFromProfessional(professionalId, start, end);
+    allResults.push(...slots);
+  }
+
+  return allResults.sort((a, b) => new Date(a.datetime) - new Date(b.datetime));
 };
 
 const getNextOccurrenceDateForWeekday = (weekdayName) => {
@@ -132,7 +133,7 @@ const getFirstAvailableDateAfter = (slots, minDate, minDateTime = null) => {
     const slotDate = slot.date;
     const slotDateTime = new Date(slot.datetime).getTime();
 
-    if (minDateTime) {
+    if (minDateTime !== null) {
       if (slotDateTime > minDateTime) {
         return slotDate;
       }
@@ -192,14 +193,17 @@ const getRealAvailability = async ({
     };
   }
 
-  let slots = await fetchAllSlots();
+  const slots = await fetchAllSlots();
 
   if (!slots.length) {
     return {
-      success: true,
+      success: false,
       attempt: safeAttempt,
       handover: true,
-      message: 'Encaminhar para atendente humano'
+      message: 'Nenhum slot foi encontrado na agenda real.',
+      debug: {
+        totalSlots: 0
+      }
     };
   }
 
@@ -225,7 +229,12 @@ const getRealAvailability = async ({
       }),
       option1: options[0] || null,
       option2: options[1] || null,
-      options
+      options,
+      debug: {
+        totalSlots: slots.length,
+        targetDate,
+        exactMatches: exactMatches.length
+      }
     };
   }
 
@@ -243,7 +252,12 @@ const getRealAvailability = async ({
       success: true,
       attempt: safeAttempt,
       handover: true,
-      message: 'Encaminhar para atendente humano'
+      message: 'Encaminhar para atendente humano',
+      debug: {
+        totalSlots: slots.length,
+        targetDate,
+        nextAvailableDate: null
+      }
     };
   }
 
@@ -264,7 +278,13 @@ const getRealAvailability = async ({
       success: true,
       attempt: safeAttempt,
       handover: true,
-      message: 'Encaminhar para atendente humano'
+      message: 'Encaminhar para atendente humano',
+      debug: {
+        totalSlots: slots.length,
+        targetDate,
+        nextAvailableDate,
+        nextDateSlots: nextDateSlots.length
+      }
     };
   }
 
@@ -288,6 +308,12 @@ const getRealAvailability = async ({
     options: {
       morning,
       afternoon
+    },
+    debug: {
+      totalSlots: slots.length,
+      targetDate,
+      nextAvailableDate,
+      nextDateSlots: nextDateSlots.length
     }
   };
 };
