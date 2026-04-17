@@ -58,7 +58,9 @@ const formatLabel = (time) => {
 const createOption = (slot) => ({
   slotId: `${slot.date}T${slot.time}|${slot.profissionalId}|${slot.localId}`,
   label: `${slot.weekday} às ${formatLabel(slot.time)}`,
-  timeLabel: formatLabel(slot.time)
+  timeLabel: formatLabel(slot.time),
+  weekday: slot.weekday,
+  date: slot.date
 });
 
 const enrich = (slot) => {
@@ -102,12 +104,55 @@ const fetchAllSlots = async () => {
     .sort((a, b) => new Date(a.datetime) - new Date(b.datetime));
 };
 
+const getNextOccurrenceDateForWeekday = (weekdayName) => {
+  const targetIndex = WEEKDAYS.indexOf(weekdayName);
+
+  if (targetIndex === -1) {
+    return null;
+  }
+
+  const today = new Date();
+  const todayIndex = today.getDay();
+
+  let diff = targetIndex - todayIndex;
+
+  if (diff < 0) {
+    diff += 7;
+  }
+
+  const targetDate = new Date(today);
+  targetDate.setHours(0, 0, 0, 0);
+  targetDate.setDate(today.getDate() + diff);
+
+  return targetDate.toISOString().slice(0, 10);
+};
+
+const getFirstAvailableDateAfter = (slots, minDate, minDateTime = null) => {
+  for (const slot of slots) {
+    const slotDate = slot.date;
+    const slotDateTime = new Date(slot.datetime).getTime();
+
+    if (minDateTime) {
+      if (slotDateTime > minDateTime) {
+        return slotDate;
+      }
+      continue;
+    }
+
+    if (slotDate > minDate) {
+      return slotDate;
+    }
+  }
+
+  return null;
+};
+
 const buildTwoOptionsOfferText = ({ patientName, preferredWeekday, preferredShift, options }) => {
   const first = options[0];
   const second = options[1];
 
   if (!first || !second) {
-    return `${patientName}, não encontrei duas opções compatíveis agora.`;
+    return `${patientName}, não encontrei dois horários compatíveis agora. Posso verificar a próxima disponibilidade mais próxima para você?`;
   }
 
   const shiftLabel = SHIFT_LABELS[preferredShift] || preferredShift;
@@ -115,7 +160,7 @@ const buildTwoOptionsOfferText = ({ patientName, preferredWeekday, preferredShif
   return `${patientName}, para ${preferredWeekday} no período da ${shiftLabel}, tenho estas duas opções mais próximas: 1) ${first.timeLabel}  2) ${second.timeLabel}. Qual você prefere?`;
 };
 
-const buildSplitFourOfferText = ({ patientName, morning, afternoon }) => {
+const buildSplitFourOfferText = ({ patientName, dateLabel, morning, afternoon }) => {
   const morningText = morning.length
     ? `De manhã: 1) ${morning[0]?.timeLabel || '-'}  2) ${morning[1]?.timeLabel || '-'}`
     : 'De manhã: sem opções no momento';
@@ -124,7 +169,7 @@ const buildSplitFourOfferText = ({ patientName, morning, afternoon }) => {
     ? `De tarde: 3) ${afternoon[0]?.timeLabel || '-'}  4) ${afternoon[1]?.timeLabel || '-'}`
     : 'De tarde: sem opções no momento';
 
-  return `${patientName}, consegui encontrar a próxima disponibilidade mais próxima. ${morningText}. ${afternoonText}. Qual opção você prefere?`;
+  return `${patientName}, consegui encontrar a próxima disponibilidade mais próxima para ${dateLabel}. ${morningText}. ${afternoonText}. Qual opção você prefere?`;
 };
 
 const getRealAvailability = async ({
@@ -149,43 +194,67 @@ const getRealAvailability = async ({
 
   let slots = await fetchAllSlots();
 
-  if (lastOfferedAfter) {
-    const cutoff = new Date(lastOfferedAfter);
-    slots = slots.filter((s) => new Date(s.datetime) > cutoff);
+  if (!slots.length) {
+    return {
+      success: true,
+      attempt: safeAttempt,
+      handover: true,
+      message: 'Encaminhar para atendente humano'
+    };
   }
 
-  const matches = slots.filter(
-    (s) => s.weekday === weekday && s.shift === shift
-  );
+  const targetDate = getNextOccurrenceDateForWeekday(weekday);
 
   if (safeAttempt === 1) {
-    const options = matches.slice(0, 2).map(createOption);
+    const exactMatches = slots.filter(
+      (s) => s.date === targetDate && s.shift === shift
+    );
+
+    const options = exactMatches.slice(0, 2).map(createOption);
 
     return {
       success: true,
       attempt: safeAttempt,
       handover: false,
       offerMode: 'two_options',
-      offerText: options.length === 2
-        ? buildTwoOptionsOfferText({
-            patientName,
-            preferredWeekday,
-            preferredShift: shift,
-            options
-          })
-        : `${patientName}, não encontrei dois horários compatíveis agora. Posso verificar a próxima disponibilidade mais próxima para você?`,
+      offerText: buildTwoOptionsOfferText({
+        patientName,
+        preferredWeekday,
+        preferredShift: shift,
+        options
+      }),
       option1: options[0] || null,
       option2: options[1] || null,
       options
     };
   }
 
-  const morning = slots
+  let nextAvailableDate = null;
+
+  if (lastOfferedAfter) {
+    const cutoffDateTime = new Date(lastOfferedAfter).getTime();
+    nextAvailableDate = getFirstAvailableDateAfter(slots, null, cutoffDateTime);
+  } else {
+    nextAvailableDate = getFirstAvailableDateAfter(slots, targetDate, null);
+  }
+
+  if (!nextAvailableDate) {
+    return {
+      success: true,
+      attempt: safeAttempt,
+      handover: true,
+      message: 'Encaminhar para atendente humano'
+    };
+  }
+
+  const nextDateSlots = slots.filter((s) => s.date === nextAvailableDate);
+
+  const morning = nextDateSlots
     .filter((s) => s.shift === SHIFT_MANHA)
     .slice(0, 2)
     .map(createOption);
 
-  const afternoon = slots
+  const afternoon = nextDateSlots
     .filter((s) => s.shift === SHIFT_TARDE)
     .slice(0, 2)
     .map(createOption);
@@ -199,6 +268,8 @@ const getRealAvailability = async ({
     };
   }
 
+  const dateLabel = morning[0]?.weekday || afternoon[0]?.weekday || nextAvailableDate;
+
   return {
     success: true,
     attempt: safeAttempt,
@@ -206,6 +277,7 @@ const getRealAvailability = async ({
     offerMode: 'split_four',
     offerText: buildSplitFourOfferText({
       patientName,
+      dateLabel,
       morning,
       afternoon
     }),
