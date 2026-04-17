@@ -79,9 +79,8 @@ const fetchAllSlots = async () => {
       dataStart: start,
       dataEnd: end,
       unidadeId: UNIDADE_ID,
-      profissionalId
-    });
-
+      profissionalId: professionalId
+  });
     const flattened = flattenAvailableSchedule(raw).map(enrich);
 
     debugByProfessional.push({
